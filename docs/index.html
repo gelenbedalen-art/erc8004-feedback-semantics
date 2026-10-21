@@ -73,7 +73,7 @@ a { color: var(--accent); }
     <h2 style="font-size:15px;color:var(--text)">How to read this</h2>
     <ul>
       <li><b>Registry summary</b> is the registry's own <code>getSummary(agentId, clients, "", "")</code>: a plain mean of every non-revoked entry, whatever its tag.</li>
-      <li><b>ArcID</b> values come from the public API at <code>api.arcusid.com</code>. If the browser cannot reach it, that column stays empty.</li>
+      <li><b>ArcID</b> values come from the public API at <code>api.arcusid.com</code>. That API does not allow calls from other websites, so when the browser cannot reach it the page uses the census snapshot committed in the repo (fetched from the same API on 2026-10-21) and says so. On-chain values are always read live.</li>
       <li><b>Our reading</b> takes the mean of each client's entries, then the mean across clients (the same grouping ArcID uses). Binary flags and amounts in other units are left out; 0-100 ratings and percentages count.</li>
       <li>Tag meanings come from the <a href="https://best-practices.8004scan.io/docs/02-feedback-standard.html">8004scan Feedback Data Profile</a>. Rules marked <i>inferred</i> (<code>metadataVerified</code>, <code>stbAgentActive</code>, <code>score</code>) are our reading of the tag name and are not documented by their writers.</li>
       <li>ArcID's Trust Score formula is not public. This page does not compute a corrected Trust Score.</li>
@@ -101,6 +101,23 @@ async function api(path) {
   } catch { return null; }
 }
 
+// The ArcID API does not send CORS headers, so a browser usually cannot call it from this page.
+// Fallback: the census snapshot committed in this repo, which holds the same API fields.
+const SNAPSHOT_URL = "https://raw.githubusercontent.com/gelenbedalen-art/erc8004-feedback-semantics/main/data/snapshot-2026-10-21.ndjson";
+let snapshot = null;
+async function snapshotFor(id) {
+  try {
+    if (!snapshot) {
+      const r = await fetch(SNAPSHOT_URL);
+      if (!r.ok) return null;
+      snapshot = L.fromNdjson(await r.text());
+    }
+    const agent = snapshot.agents.find((a) => String(a.id) === String(id)) || null;
+    const fb = snapshot.feedback[String(id)] || null;
+    return agent || fb ? { agent, feedback: fb || [], fetchedAt: snapshot.fetchedAt } : { agent: null, feedback: [], fetchedAt: snapshot.fetchedAt };
+  } catch { return null; }
+}
+
 function meanOfClientMeans(rows, pick) {
   const groups = new Map();
   for (const r of rows) {
@@ -122,11 +139,20 @@ async function run(id) {
   $("#status").className = "status";
   $("#status").textContent = `Reading agent ${id} from ${target.reputationRegistry} ...`;
   try {
-    const [chain, agentRes, fbRes] = await Promise.all([
+    let [chain, agentRes, fbRes] = await Promise.all([
       L.readAllFeedback(target, id),
       api(`/v1/agents/${id}`),
       api(`/v1/agents/${id}/feedback?limit=50`),
     ]);
+    let arcSource = "live API";
+    if (!fbRes) {
+      const snap = await snapshotFor(id);
+      if (snap) {
+        agentRes = snap.agent ? { data: snap.agent } : null;
+        fbRes = { data: snap.feedback };
+        arcSource = `census snapshot ${snap.fetchedAt.slice(0, 10)}`;
+      }
+    }
     const clients = [...new Set(chain.map((c) => c.client))];
     const summary = clients.length ? await L.getSummary(target, id, clients) : null;
     const apiByKey = new Map((fbRes ? fbRes.data : []).map((f) => [f.client.toLowerCase() + "#" + f.index, f]));
@@ -151,7 +177,7 @@ async function run(id) {
 
     let html = `<div class="cards">`;
     html += card("Registry summary", fmt(regAvg), summary ? `getSummary over ${summary.count} entries, all tags mixed` : "no feedback");
-    html += card("ArcID average", agent ? fmt(agent.reputation && agent.reputation.average) : "-", agent ? `Trust Score ${fmt(agent.trustScore, 1)}` : "API not reachable from this page");
+    html += card("ArcID average", agent ? fmt(agent.reputation && agent.reputation.average) : "-", agent ? `Trust Score ${fmt(agent.trustScore, 1)} (${esc(arcSource)})` : fbRes ? `not in the ${esc(arcSource)}` : "ArcID data not reachable from this page");
     html += card("Our reading", ours === null ? "no rating" : fmt(ours), ours === null ? "only flags or measurements; no 0-100 rating evidence" : "flags and unit amounts left out");
     html += card("Flags read as ratings", fbRes ? String(flagsRated) : "-", `${flags} pass/fail flag${flags === 1 ? "" : "s"} on-chain` + (wrong ? `; ${wrong} value${wrong === 1 ? "" : "s"} on the wrong scale` : ""));
     html += `</div>`;
@@ -165,7 +191,7 @@ async function run(id) {
     }
     html += `</tbody></table></div>`;
     $("#out").innerHTML = rows.length ? html : `<p>No feedback for agent ${esc(id)} in the registry.</p>`;
-    $("#status").textContent = `${rows.length} entr${rows.length === 1 ? "y" : "ies"} from ${clients.length} client${clients.length === 1 ? "" : "s"}, read from chain ${target.chainId}.` + (fbRes ? "" : " ArcID API not reachable; ArcID columns are empty.");
+    $("#status").textContent = `${rows.length} entr${rows.length === 1 ? "y" : "ies"} from ${clients.length} client${clients.length === 1 ? "" : "s"}, read from chain ${target.chainId}.` + (fbRes ? ` ArcID values: ${arcSource}.` : " ArcID data not reachable; ArcID columns are empty.");
   } catch (e) {
     $("#status").className = "status error";
     $("#status").textContent = "Could not read the registry: " + (e && e.message ? e.message : e);
