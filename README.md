@@ -25,7 +25,7 @@ Requires Node 22.6+ (runs TypeScript directly, no dependencies).
 npm test
 npm run census -- data/snapshot-$(date +%F).ndjson   # read-only, throttled; ARC_RPC_URL=none skips the chain check
 npm run report -- data/snapshot-YYYY-MM-DD.ndjson REPORT.md
-npm run bundle                                        # builds docs/lib.js for the demo page (done by the pages workflow on push)
+npm run bundle                                        # rebuilds docs/lib.js (the demo page's copy of src/)
 ```
 
 ```ts
@@ -40,7 +40,7 @@ const entries = await readAllFeedback(ARC.mainnet, 240);
 summarize(entries.filter((e) => !e.revoked));
 ```
 
-CI runs the tests, regenerates `REPORT.md` from the committed snapshot and fails on any difference, and checks that the demo bundle builds. The pages workflow builds `docs/lib.js` from `src/` and publishes `docs/`.
+CI runs the tests, regenerates `REPORT.md` from the committed snapshot and fails on any difference, and checks that `docs/lib.js` matches `src/`. The demo is a static page: open `docs/index.html` in a browser, no build step.
 
 ## Scope and limits
 
