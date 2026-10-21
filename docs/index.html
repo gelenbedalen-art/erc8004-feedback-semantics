@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feedback Semantics</title>
+<meta name="description" content="Read an ERC-8004 agent's feedback straight from the Arc Reputation Registry and see which entries are ratings and which are pass/fail flags.">
+<style>
+:root {
+  --bg: #fbfaf8; --surface: #ffffff; --text: #1d1d1b; --muted: #6b6a66; --line: #e6e3dd;
+  --accent: #1f5f8b; --flag: #9a5b00; --flag-bg: #fff4e0; --bad: #a3271d; --bad-bg: #fdecea; --ok: #2e6b3a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --surface: #1e1e1c; --text: #ecebe7; --muted: #a09e98; --line: #33322f;
+    --accent: #7db7e0; --flag: #f0b45a; --flag-bg: #3a2c14; --bad: #f08a80; --bad-bg: #3d1f1c; --ok: #86c995;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.lede { color: var(--muted); margin: 0 0 24px; max-width: 70ch; }
+form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+input { font: inherit; padding: 8px 10px; width: 140px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
+button { font: inherit; padding: 8px 14px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg); border-radius: 6px; cursor: pointer; }
+button.chip { background: transparent; color: var(--accent); padding: 4px 10px; font-size: 13px; }
+.examples { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+.status { color: var(--muted); font-size: 14px; min-height: 1.5em; }
+.error { color: var(--bad); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0 24px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+.card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.card .v { font-size: 24px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.card .n { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: none; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+code, .mono { font-family: var(--mono); font-size: 12px; }
+.tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+.tag.binary { background: var(--flag-bg); color: var(--flag); }
+.tag.wrong { background: var(--bad-bg); color: var(--bad); }
+.tag.rating, .tag.percent { color: var(--ok); }
+.tag.unknown, .tag.other { color: var(--muted); }
+section.notes { margin-top: 28px; color: var(--muted); font-size: 13px; max-width: 75ch; }
+section.notes li { margin-bottom: 4px; }
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>ERC-8004 feedback semantics</h1>
+  <p class="lede">Enter an agent ID on Arc mainnet. The page reads its feedback directly from the canonical Reputation Registry with <code>eth_call</code>, classifies each entry by its tag, and compares the result with the ArcID indexer. Read-only: no wallet, no signing, no transactions.</p>
+
+  <form id="f">
+    <label for="id">Agent ID</label>
+    <input id="id" inputmode="numeric" pattern="[0-9]+" required placeholder="e.g. 240">
+    <button type="submit">Read</button>
+  </form>
+  <div class="examples">Examples:
+    <button class="chip" data-id="1407">1407: only pass flags, scored 30.4</button>
+    <button class="chip" data-id="289">289: ratings plus a documented flag</button>
+    <button class="chip" data-id="240">240: uptime read 10x too high</button>
+  </div>
+  <div id="status" class="status"></div>
+  <div id="out"></div>
+
+  <section class="notes">
+    <h2 style="font-size:15px;color:var(--text)">How to read this</h2>
+    <ul>
+      <li><b>Registry summary</b> is the registry's own <code>getSummary(agentId, clients, "", "")</code>: a plain mean of every non-revoked entry, whatever its tag.</li>
+      <li><b>ArcID</b> values come from the public API at <code>api.arcusid.com</code>. If the browser cannot reach it, that column stays empty.</li>
+      <li><b>Our reading</b> takes the mean of each client's entries, then the mean across clients (the same grouping ArcID uses). Binary flags and amounts in other units are left out; 0-100 ratings and percentages count.</li>
+      <li>Tag meanings come from the <a href="https://best-practices.8004scan.io/docs/02-feedback-standard.html">8004scan Feedback Data Profile</a>. Rules marked <i>inferred</i> (<code>metadataVerified</code>, <code>stbAgentActive</code>, <code>score</code>) are our reading of the tag name and are not documented by their writers.</li>
+      <li>ArcID's Trust Score formula is not public. This page does not compute a corrected Trust Score.</li>
+    </ul>
+    <p>Source, tests and the full census report: <a href="https://github.com/gelenbedalen-art/erc8004-feedback-semantics">github.com/gelenbedalen-art/erc8004-feedback-semantics</a> (MIT).</p>
+  </section>
+</main>
+<script src="lib.js"></script>
+<script>
+"use strict";
+const L = ERC8004FS;
+const target = L.ARC.mainnet;
+const API = "https://api.arcusid.com";
+const $ = (s) => document.querySelector(s);
+const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v) ? "-" : Number.isInteger(v) ? String(v) : v.toFixed(d));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const short = (a) => a.slice(0, 6) + "..." + a.slice(-4);
+
+async function api(path) {
+  try {
+    const r = await fetch(API + path, { headers: { accept: "application/json" } });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j && j.success ? j : null;
+  } catch { return null; }
+}
+
+function meanOfClientMeans(rows, pick) {
+  const groups = new Map();
+  for (const r of rows) {
+    const v = pick(r);
+    if (v === null || v === undefined) continue;
+    const k = r.client.toLowerCase();
+    groups.set(k, [...(groups.get(k) || []), v]);
+  }
+  const means = [...groups.values()].map((xs) => xs.reduce((a, b) => a + b, 0) / xs.length);
+  return means.length ? means.reduce((a, b) => a + b, 0) / means.length : null;
+}
+
+function card(k, v, n) {
+  return `<div class="card"><div class="k">${esc(k)}</div><div class="v">${v}</div><div class="n">${n}</div></div>`;
+}
+
+async function run(id) {
+  $("#out").innerHTML = "";
+  $("#status").className = "status";
+  $("#status").textContent = `Reading agent ${id} from ${target.reputationRegistry} ...`;
+  try {
+    const [chain, agentRes, fbRes] = await Promise.all([
+      L.readAllFeedback(target, id),
+      api(`/v1/agents/${id}`),
+      api(`/v1/agents/${id}/feedback?limit=50`),
+    ]);
+    const clients = [...new Set(chain.map((c) => c.client))];
+    const summary = clients.length ? await L.getSummary(target, id, clients) : null;
+    const apiByKey = new Map((fbRes ? fbRes.data : []).map((f) => [f.client.toLowerCase() + "#" + f.index, f]));
+
+    const rows = chain.map((c) => {
+      const scaled = Number(c.value) / 10 ** c.valueDecimals;
+      const n = L.normalize({ value: c.value, valueDecimals: c.valueDecimals, tag1: c.tag1, tag2: c.tag2 });
+      const a = apiByKey.get(c.client.toLowerCase() + "#" + c.index) || null;
+      const arcRating = a && a.kind === "rating" && a.rating !== null ? Number(a.rating) : null;
+      const wrongScale = arcRating !== null && Math.abs(arcRating - scaled) > 1e-9;
+      return { ...c, scaled, n, a, arcRating, wrongScale };
+    });
+
+    const live = rows.filter((r) => !r.revoked);
+    const ours = meanOfClientMeans(live, (r) => (r.n.countsAsRating ? r.n.rating : null));
+    const arcMean = fbRes ? meanOfClientMeans(rows, (r) => r.arcRating) : null;
+    const flags = live.filter((r) => r.n.kind === "binary").length;
+    const flagsRated = rows.filter((r) => r.n.kind === "binary" && r.arcRating !== null).length;
+    const wrong = rows.filter((r) => r.wrongScale).length;
+    const agent = agentRes ? agentRes.data : null;
+    const regAvg = summary && summary.count ? Number(summary.summaryValue) / 10 ** summary.summaryValueDecimals : null;
+
+    let html = `<div class="cards">`;
+    html += card("Registry summary", fmt(regAvg), summary ? `getSummary over ${summary.count} entries, all tags mixed` : "no feedback");
+    html += card("ArcID average", agent ? fmt(agent.reputation && agent.reputation.average) : "-", agent ? `Trust Score ${fmt(agent.trustScore, 1)}` : "API not reachable from this page");
+    html += card("Our reading", ours === null ? "no rating" : fmt(ours), ours === null ? "only flags or measurements; no 0-100 rating evidence" : "flags and unit amounts left out");
+    html += card("Flags read as ratings", fbRes ? String(flagsRated) : "-", `${flags} pass/fail flag${flags === 1 ? "" : "s"} on-chain` + (wrong ? `; ${wrong} value${wrong === 1 ? "" : "s"} on the wrong scale` : ""));
+    html += `</div>`;
+
+    html += `<div class="table-wrap"><table><thead><tr><th>client</th><th>#</th><th>tag1 / tag2</th><th>on-chain value</th><th>decimals</th><th>stands for</th><th>our kind</th><th>ArcID rating</th></tr></thead><tbody>`;
+    for (const r of rows) {
+      const kind = r.n.kind === "binary" ? "binary" : r.n.kind === "rating" || r.n.kind === "percent" ? r.n.kind : r.n.kind === "unknown" ? "unknown" : "other";
+      const basis = r.n.basis === "inferred" ? " (inferred)" : r.n.basis === "assumed" ? " (assumed)" : "";
+      const arc = r.a ? (r.arcRating !== null ? `<span class="tag ${r.wrongScale ? "wrong" : r.n.kind === "binary" ? "binary" : ""}">${fmt(r.arcRating)}</span>` : `<span class="mono">${esc(r.a.kind)}</span>`) : "-";
+      html += `<tr${r.revoked ? ' style="opacity:.5"' : ""}><td class="mono" title="${esc(r.client)}">${esc(short(r.client))}</td><td class="num">${r.index}</td><td><code>${esc(r.tag1) || "&nbsp;"}</code> / <code>${esc(r.tag2)}</code>${r.revoked ? " (revoked)" : ""}</td><td class="num">${esc(r.value)}</td><td class="num">${r.valueDecimals}</td><td class="num">${fmt(r.scaled, 4)}</td><td><span class="tag ${kind}">${esc(r.n.kind)}${basis}</span></td><td class="num">${arc}</td></tr>`;
+    }
+    html += `</tbody></table></div>`;
+    $("#out").innerHTML = rows.length ? html : `<p>No feedback for agent ${esc(id)} in the registry.</p>`;
+    $("#status").textContent = `${rows.length} entr${rows.length === 1 ? "y" : "ies"} from ${clients.length} client${clients.length === 1 ? "" : "s"}, read from chain ${target.chainId}.` + (fbRes ? "" : " ArcID API not reachable; ArcID columns are empty.");
+  } catch (e) {
+    $("#status").className = "status error";
+    $("#status").textContent = "Could not read the registry: " + (e && e.message ? e.message : e);
+  }
+}
+
+$("#f").addEventListener("submit", (e) => { e.preventDefault(); const id = $("#id").value.trim(); if (/^\d+$/.test(id)) { history.replaceState(null, "", "#" + id); run(id); } });
+document.querySelectorAll("[data-id]").forEach((b) => b.addEventListener("click", () => { $("#id").value = b.dataset.id; $("#f").requestSubmit(); }));
+const start = location.hash.slice(1);
+if (/^\d+$/.test(start)) { $("#id").value = start; run(start); }
+</script>
+</body>
+</html>

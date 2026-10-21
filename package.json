@@ -1,0 +1,26 @@
+{
+  "name": "erc8004-feedback-semantics",
+  "version": "0.1.0",
+  "description": "Tag-aware normalization of ERC-8004 feedback, and a read-only census of how ArcID scores it on Arc.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --no-warnings --test test/*.test.ts",
+    "census": "node --experimental-strip-types --no-warnings scripts/census.ts",
+    "report": "node --experimental-strip-types --no-warnings scripts/report.ts",
+    "bundle": "node --experimental-strip-types --no-warnings scripts/bundle.ts > docs/lib.js"
+  },
+  "keywords": [
+    "erc-8004",
+    "reputation",
+    "arc",
+    "arcid",
+    "ai-agents"
+  ]
+}

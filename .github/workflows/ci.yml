@@ -1,0 +1,18 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: Report is reproducible from the committed snapshot
+        run: |
+          snap=$(ls data/snapshot-*.ndjson | tail -1)
+          npm run report -- "$snap" /tmp/REPORT.md
+          diff -u REPORT.md /tmp/REPORT.md
+      - name: Demo bundle builds
+        run: npm run bundle --silent && node -e "require('vm').runInNewContext(require('fs').readFileSync('docs/lib.js','utf8')+';ERC8004FS.normalize',{TextEncoder,TextDecoder,setTimeout,fetch})"
